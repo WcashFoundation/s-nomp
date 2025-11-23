@@ -1,0 +1,25 @@
+{
+    "name": "wcash",
+    "symbol": "wcash",
+    "algorithm": "equihash",
+    "overwinter": true,
+    "sapling": true,
+    "requireShielding": true,
+    "payFoundersReward": false,
+    "txfee": 0.0004,
+    "parameters": {
+        "N": 200,
+        "K": 9,
+        "personalization": "ZcashPoW"
+    },
+    "explorer": {
+        "txURL": "",
+        "blockURL": "",
+        "_comment_explorer": "Set if you have a block explorer (optional)."
+    },
+    "poolOptions": {
+        "confirmations": 100
+    },
+    "hasGetInfo": true,
+    "_comment_hasGetInfo": "Leave true for Zebra-style RPCs or zcashd forks."
+}

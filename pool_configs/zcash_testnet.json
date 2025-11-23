@@ -1,0 +1,95 @@
+{
+    "enabled": false,
+    "coin": "testnet/zec.json",
+
+    "address": "tmRGc4CD1UyUdbSJmTUzcB6oDqk4qUaHnnh",
+    "_comment_address": "This address is currently ignored, but it must be a P2PKH address. generated using zcash-cli -testnet getnewaddress. A transparent address to send coinbase rewards to and to transfer to zAddress.",
+
+    "zAddress": "",
+    "_comment_zAddress": "a private address used to send coins to tAddress.",
+
+    "tAddress": "",
+    "_comment_tAddress": "Payments are currently disabled. Transparent address used to send payments, make this a different address, otherwise payments will not send",
+
+    "invalidAddress": "tmRGc4CD1UyUdbSJmTUzcB6oDqk4qUaHnnh",
+    "_comment_invalidAddress": "This address is currently ignored. Invalid addresses will be converted to the above",
+
+    "walletInterval": 100000,
+    "_comment_walletInterval": "Used to cache coin stats",
+
+    "rewardRecipients": {
+        "": 0.2
+    },
+
+    "paymentProcessing": {
+        "enabled": false,
+        "_comment_enabled": "this setting is ignored by the website, so it will log RPC errors",
+        "minConf": 10,
+        "paymentMode": "prop",
+        "_comment_paymentMode": "prop, pplnt",
+        "paymentInterval": 120,
+        "minimumPayment": 0.05,
+        "maxBlocksPerPayment": 3,
+        "daemon": {
+            "host": "127.0.0.1",
+            "port": 18232,
+            "_comment_port": "change this to your Zebra port",
+            "user": "rpcuser",
+            "password": "rpcpassword"
+        }
+    },
+
+    "tlsOptions": {
+        "enabled": false,
+        "serverKey": "",
+        "serverCert": "",
+        "ca": ""
+    },
+
+    "ports": {
+        "1234": {
+            "diff": 0.05,
+            "tls": false,
+            "varDiff": {
+                "minDiff": 0.04,
+                "maxDiff": 36,
+                "targetTime": 15,
+                "retargetTime": 60,
+                "variancePercent": 30
+            }
+        }
+    },
+
+    "poolId": "test",
+    "_comment_poolId": "use it for region identification: eu, us, asia or keep default if you have one stratum instance for one coin",
+
+    "daemons": [
+        {
+            "host": "127.0.0.1",
+            "port": 18232,
+            "_comment_port": "change this to your Zebra port",
+            "user": "rpcuser",
+            "password": "rpcpassword",
+            "_comment_user_password": "ignored by Zebra"
+        }
+    ],
+
+    "p2p": {
+        "enabled": false,
+        "host": "127.0.0.1",
+        "port": 19333,
+        "disableTransactions": true
+    },
+
+    "mposMode": {
+        "enabled": false,
+        "host": "127.0.0.1",
+        "port": 3306,
+        "user": "me",
+        "password": "mypass",
+        "database": "zec_testnet",
+        "checkPassword": true,
+        "autoCreateWorker": false
+    }
+
+}

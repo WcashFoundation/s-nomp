@@ -1,0 +1,91 @@
+{
+    "enabled": true,
+    "coin": "wcash.json",
+
+    "address": "t1eKu1GMohiNXp6DYR6tdxCpNs92E1EZpG1",
+    "_comment_address": "Transparent coinbase address if you later turn on payments; ignored while payments stay disabled.",
+
+    "zAddress": "",
+    "_comment_zAddress": "Private address used only if payments are enabled and shielding is required.",
+
+    "tAddress": "",
+    "_comment_tAddress": "Payout address if payments are enabled; keep different from coinbase address.",
+
+    "invalidAddress": "",
+    "_comment_invalidAddress": "Invalid miner addresses will be rewritten to this address if set.",
+
+    "walletInterval": 2.5,
+    "_comment_walletInterval": "Used to cache coin stats.",
+
+    "rewardRecipients": {},
+
+    "validateWorkerUsername": false,
+
+    "tlsOptions": {
+        "enabled": false,
+        "serverKey": "",
+        "serverCert": "",
+        "ca": ""
+    },
+
+    "paymentProcessing": {
+        "enabled": false,
+        "_comment_enabled": "Keep false to avoid payouts; pool just relays work to your daemon.",
+        "minConf": 10,
+        "paymentMode": "prop",
+        "_comment_paymentMode": "prop, pplnt",
+        "paymentInterval": 120,
+        "minimumPayment": 0.05,
+        "maxBlocksPerPayment": 3,
+        "daemon": {
+            "host": "127.0.0.1",
+            "port": 17777,
+            "user": "foo",
+            "password": "bar"
+        }
+    },
+
+    "ports": {
+        "1234": {
+            "diff": 0.5,
+            "tls": false,
+            "varDiff": {
+                "minDiff": 0.04,
+                "maxDiff": 36,
+                "targetTime": 15,
+                "retargetTime": 60,
+                "variancePercent": 30
+            }
+        }
+    },
+
+    "poolId": "main",
+    "_comment_poolId": "Use region code if you run multiple instances.",
+
+    "daemons": [
+        {
+            "host": "127.0.0.1",
+            "port": 17777,
+            "user": "foo",
+            "password": "bar"
+        }
+    ],
+
+    "p2p": {
+        "enabled": false,
+        "host": "127.0.0.1",
+        "port": 8233,
+        "disableTransactions": true
+    },
+
+    "mposMode": {
+        "enabled": false,
+        "host": "127.0.0.1",
+        "port": 3306,
+        "user": "me",
+        "password": "mypass",
+        "database": "wcash",
+        "checkPassword": true,
+        "autoCreateWorker": false
+    }
+}
