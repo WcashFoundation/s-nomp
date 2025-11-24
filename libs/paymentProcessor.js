@@ -377,24 +377,39 @@ function SetupForPool(logger, poolOptions, setupFinished){
                     finalRedisCommands.push(['hset', coin + ':stats', 'networkSols', result[0].response.networkhashps]);
                 }
 
+                // Zebra lacks getnetworkinfo; prefer it if available, otherwise fall back to getconnectioncount.
                 daemon.cmd('getnetworkinfo', params,
                     function (result) {
-                        if (!result || result.error || result[0].error || !result[0].response) {
-                            logger.error(logSystem, logComponent, 'Error with RPC call getnetworkinfo '+JSON.stringify(result[0].error));
+                        if (result && !result.error && !result[0].error && result[0].response) {
+                            if (result[0].response.connections !== null) {
+                                finalRedisCommands.push(['hset', coin + ':stats', 'networkConnections', result[0].response.connections]);
+                            }
+                            if (result[0].response.version !== null) {
+                                finalRedisCommands.push(['hset', coin + ':stats', 'networkVersion', result[0].response.version]);
+                            }
+                            if (result[0].response.subversion !== null) {
+                                finalRedisCommands.push(['hset', coin + ':stats', 'networkSubVersion', result[0].response.subversion]);
+                            }
+                            if (result[0].response.protocolversion !== null) {
+                                finalRedisCommands.push(['hset', coin + ':stats', 'networkProtocolVersion', result[0].response.protocolversion]);
+                            }
+                        }
+                        else {
+                            // Fallback for daemons without getnetworkinfo (e.g., Zebra)
+                            daemon.cmd('getconnectioncount', params, function (connResult) {
+                                if (connResult && !connResult.error && !connResult[0].error && connResult[0].response !== null) {
+                                    finalRedisCommands.push(['hset', coin + ':stats', 'networkConnections', connResult[0].response]);
+                                }
+                                if (finalRedisCommands.length <= 0)
+                                    return;
+                                redisClient.multi(finalRedisCommands).exec(function(error, results){
+                                    if (error){
+                                        logger.error(logSystem, logComponent, 'Error with redis during call to cacheNetworkStats() ' + JSON.stringify(error));
+                                        return;
+                                    }
+                                });
+                            });
                             return;
-                        }
-
-                        if (result[0].response.connections !== null) {
-                            finalRedisCommands.push(['hset', coin + ':stats', 'networkConnections', result[0].response.connections]);
-                        }
-                        if (result[0].response.version !== null) {
-                            finalRedisCommands.push(['hset', coin + ':stats', 'networkVersion', result[0].response.version]);
-                        }
-                        if (result[0].response.subversion !== null) {
-                            finalRedisCommands.push(['hset', coin + ':stats', 'networkSubVersion', result[0].response.subversion]);
-                        }
-                        if (result[0].response.protocolversion !== null) {
-                            finalRedisCommands.push(['hset', coin + ':stats', 'networkProtocolVersion', result[0].response.protocolversion]);
                         }
 
                         if (finalRedisCommands.length <= 0)

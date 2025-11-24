@@ -1,0 +1,23 @@
+{
+    "name": "zcash_zebra_nu5",
+    "symbol": "zec_zebra_nu5",
+    "algorithm": "equihash",
+    "useZGetMiningJob": true,
+    "parameters": {
+        "N": 200,
+        "K": 9,
+        "personalization": "ZcashPoW"
+    },
+    "overwinter": true,
+    "sapling": true,
+    "hasGetInfo": true,
+    "_comment_hasGetInfo": "Zebra exposes getinfo-compatible fields used during startup checks.",
+    "explorer": {
+        "txURL": "",
+        "blockURL": ""
+    },
+    "poolOptions": {
+        "confirmations": 100
+    },
+    "_comment_pool": "Uses Zebra's z_getminingjob; pool does not touch coinbase, merkle roots, or NU5 commitments."
+}

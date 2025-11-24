@@ -16,10 +16,45 @@ function isLikelyAddress(addr) {
 }
 
 function fetchAddressForHeight(height) {
+    const extractAddr = (entry) => {
+        if (!entry) return null;
+        if (entry.address) return entry.address;
+        if (entry.addr) return entry.addr;
+        if (entry.rewards && Array.isArray(entry.rewards) && entry.rewards[0] &&
+            Array.isArray(entry.rewards[0].addresses) && entry.rewards[0].addresses[0]) {
+            return entry.rewards[0].addresses[0];
+        }
+        return null;
+    };
+
     try {
         const raw = fs.readFileSync(ADDRESS_MAP_PATH, 'utf8');
-        const map = JSON.parse(raw);
-        const addr = map[String(height)] || map[height] || map.default;
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (parseErr) {
+            // Try NDJSON-style (one JSON object per line)
+            data = raw.split('\n')
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map(line => {
+                    try { return JSON.parse(line); } catch (e) { return null; }
+                })
+                .filter(Boolean);
+        }
+
+        let addr = null;
+
+        if (Array.isArray(data)) {
+            const entry = data.find((item) => {
+                const id = (item.id !== undefined ? item.id : item.height);
+                return String(id) === String(height);
+            });
+            addr = extractAddr(entry);
+        } else if (typeof data === 'object' && data !== null) {
+            addr = extractAddr(data[String(height)] || data[height]);
+        }
+
         return isLikelyAddress(addr) ? addr : null;
     } catch (e) {
         console.error(`[dynamicPoolAddress] Could not read ${ADDRESS_MAP_PATH}: ${e.message}`);
@@ -62,34 +97,10 @@ function PatchedJobManager(options) {
         return false;
     };
 
-    const usedAddresses = new Set();
-
-    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
+    // Simplify: do not override address from map; use whatever is configured in options.address.
     const updateAddressIfNeeded = async (rpcData) => {
-        // Try until we get a fresh, unused address; retry every 5 seconds.
-        for (;;) {
-            const dynamicAddress = await fetchAddressForHeight(rpcData.height);
-            if (!dynamicAddress) {
-                console.error(`[dynamicPoolAddress] No valid address from API for height ${rpcData.height}, retrying in 5s.`);
-                await delay(5000);
-                continue;
-            }
-            if (usedAddresses.has(dynamicAddress)) {
-                console.error(`[dynamicPoolAddress] Address ${dynamicAddress} already used, retrying in 5s.`);
-                await delay(5000);
-                continue;
-            }
-            const fresh = await ensureZeroBalance(dynamicAddress);
-            if (!fresh) {
-                console.error(`[dynamicPoolAddress] Address ${dynamicAddress} is not fresh (non-zero balance or unknown), retrying in 5s.`);
-                await delay(5000);
-                continue;
-            }
-            usedAddresses.add(dynamicAddress);
-            options.address = dynamicAddress;
-            return true;
-        }
+        console.error(`[dynamicPoolAddress] Using configured address ${options.address} for height ${rpcData.height}`);
+        return true;
     };
 
     const originalProcessTemplate = jm.processTemplate;
