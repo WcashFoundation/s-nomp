@@ -2,6 +2,7 @@
     "name": "wcash",
     "symbol": "wcash",
     "algorithm": "equihash",
+    "useZGetMiningJob": true,
     "overwinter": true,
     "sapling": true,
     "requireShielding": true,

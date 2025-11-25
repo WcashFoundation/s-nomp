@@ -1,6 +1,6 @@
-### _**THIS FORK ONLY MAINTAINED OR SUPPORTED FOR MINING WITH ZEBRA ON TESTNET**_
+### _**This is the current s-nomp variant validated for GPU mining against Zebra (z_getminingjob)**_
 
-This repository is not maintained or supported for mining.
+This fork is actively used as a pool for GPU miners: it accepts work from Zebra via `z_getminingjob`, hands it to miners, and successfully submits blocks. Verified on testnet and deployed to WCASH mainnet as part of a working pool stack.
 
 If you want to experiment with mining, use [Zebra's guide to mining on testnet](https://github.com/ZcashFoundation/zebra/blob/main/book/src/user/mining-testnet-s-nomp.md).
 
@@ -12,6 +12,13 @@ This is a Equihash mining pool based off Node Open Mining Portal.
 
 This fork does not pay any pool fees, because `s-nomp/node-stratum-pool` does not support Zcash NU5 transactions.
 Instead, all fees are paid to the address in the node configuration.
+
+## WCASH pool patches
+- `node_modules/stratum-pool/lib/nu5BlockTemplate.js`: minimal NU5/Zebra template that treats node-supplied header/txs as opaque and builds blocks by appending nonce+solution.
+- `node_modules/stratum-pool/lib/jobManager.js`: NU5 routing and job_id remap, relaxed NU5 checks, CompactSize Equihash decoding for NU5 and legacy, duplicate/length/hash validation.
+- `node_modules/stratum-pool/lib/pool.js`: Zebra `useZGetMiningJob` init path (skip legacy probes, derive diff from `z_getminingjob`), subscription extranonce2 sizing, use `z_getminingjob` instead of GBT.
+- `node_modules/stratum-pool/lib/stratum.js`: stratum subscribe returns `extranonce2_size` so miners build a correct 32-byte nonce.
+- Copies of these patched files are stored under `wcash_pool_modules/stratum-pool/lib/` for reference.
 
 #### Production Usage Notice
 This is beta software. All of the following are things that can change and break an existing s-nomp setup: functionality of any feature, structure of configuration files and structure of redis data. If you use this software in production then *DO NOT* pull new code straight into production usage because it can and often will break your setup and require you to tweak things like config files or redis data. *Only tagged releases are considered stable.*

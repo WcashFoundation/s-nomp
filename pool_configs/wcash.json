@@ -39,7 +39,7 @@
         "maxBlocksPerPayment": 3,
         "daemon": {
             "host": "127.0.0.1",
-            "port": 17779,
+            "port": 17778,
             "user": "",
             "password": ""
         }
@@ -74,7 +74,7 @@
     "p2p": {
         "enabled": false,
         "host": "127.0.0.1",
-        "port": 7779,
+        "port": 8233,
         "disableTransactions": true
     },
 
