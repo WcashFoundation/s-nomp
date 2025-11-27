@@ -20,6 +20,33 @@ Instead, all fees are paid to the address in the node configuration.
 - `node_modules/stratum-pool/lib/stratum.js`: stratum subscribe returns `extranonce2_size` so miners build a correct 32-byte nonce.
 - Copies of these patched files are stored under `wcash_pool_modules/stratum-pool/lib/` for reference.
 
+### Troubleshooting builds
+- The bundled `equihashverify` native module only builds cleanly against old Node/V8. If npm install fails on newer Node versions with V8/Nan errors, use Node 8.11 (nvm recommended):
+  - `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && . "$NVM_DIR/nvm.sh"`
+  - `nvm install 8.11.0 && nvm use 8.11.0 && npm install -g npm@6`
+  - `rm -rf node_modules && npm install`
+
+### Quick start on a fresh Ubuntu (WCASH/Zebra)
+1. System deps:
+   - `sudo apt update && sudo apt install -y build-essential python3 redis-server libsodium-dev libboost-all-dev curl git`
+   - `sudo systemctl start redis-server && sudo systemctl enable redis-server`
+2. Node 8.11 with nvm:
+   - `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && . "$HOME/.nvm/nvm.sh"`
+   - `nvm install 8.11.0 && nvm use 8.11.0 && npm install -g npm@6`
+3. Get and install s-nomp:
+   - `git clone <your repo> ~/pool/s-nomp && cd ~/pool/s-nomp`
+   - `rm -rf node_modules && npm install`
+4. Apply patched stratum-pool files:
+   - `cp wcash_pool_modules/stratum-pool/lib/{stratum.js,pool.js,jobManager.js,nu5BlockTemplate.js} node_modules/stratum-pool/lib/`
+5. Configure:
+   - `coins/wcash.json` with `useZGetMiningJob: true` and Equihash 200,9.
+   - `pool_configs/wcash.json` with your Zebra RPC host/port (e.g. 127.0.0.1:17779), stratum port (e.g. 1235), and payout T-address.
+6. Start the pool:
+   - `nvm use 8.11.0`
+   - `npm start`
+   - Look for “Stratum Pool Server Started…” and “z_getminingjob init…” in logs.
+7. Point miners: server `<ip>`, port `1235`, user `<taddr>.<worker>`, pass `x`.
+
 #### Production Usage Notice
 This is beta software. All of the following are things that can change and break an existing s-nomp setup: functionality of any feature, structure of configuration files and structure of redis data. If you use this software in production then *DO NOT* pull new code straight into production usage because it can and often will break your setup and require you to tweak things like config files or redis data. *Only tagged releases are considered stable.*
 
