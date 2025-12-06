@@ -54,9 +54,32 @@
                 "maxDiff": 36,
                 "targetTime": 15,
                 "retargetTime": 60,
-                "variancePercent": 30
-            }
+        "variancePercent": 30
         }
+    }
+    },
+
+    "blockSubmission": {
+        "enabled": true,
+        "_comment_enabled": "Hold block submissions to throttle hash rate for Z15-only pool.",
+        "targetSpacingSeconds": 75,
+        "_comment_targetSpacingSeconds": "Base target spacing before jitter and difficulty adjustments.",
+        "jitterSeconds": 10,
+        "_comment_jitterSeconds": "Uniform random +/- jitter added to the target spacing.",
+        "minSpacingSeconds": 60,
+        "_comment_minSpacingSeconds": "Never submit a block sooner than this after the last seen block.",
+        "maxSpacingSeconds": 150,
+        "_comment_maxSpacingSeconds": "Never submit a block later than this after the last seen block.",
+        "maxHoldSeconds": 150,
+        "_comment_maxHoldSeconds": "Safety cap on how long a block can be held (must be <= maxSpacingSeconds).",
+        "speedUpStepSeconds": 1,
+        "_comment_speedUpStepSeconds": "When network difficulty is below difficultyLow, decrease delay by this per block to ramp hash in gently.",
+        "slowDownStepSeconds": 1,
+        "_comment_slowDownStepSeconds": "When network difficulty is above difficultyHigh, increase delay by this per block to slow hash gently.",
+        "difficultyLow": 80000,
+        "difficultyHigh": 120000,
+        "_comment_difficultyBounds": "Adjust delay +/-1s when block difficulty falls outside this band.",
+        "delayStepSeconds": 1
     },
 
     "poolId": "main",

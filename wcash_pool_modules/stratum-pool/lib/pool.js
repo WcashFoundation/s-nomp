@@ -43,6 +43,30 @@ var pool = module.exports = function pool(options, authorizeFn) {
         throw new Error();
     }
 
+    var blockSubmitConfig = Object.assign({
+        enabled: false,
+        minSpacingSeconds: 60,
+        targetSpacingSeconds: 75,
+        jitterSeconds: 10,
+        minSpacingSeconds: 60,
+        maxSpacingSeconds: 150,
+        maxHoldSeconds: 150,
+        speedUpStepSeconds: 1,
+        slowDownStepSeconds: 1,
+        difficultyLow: 80000,
+        difficultyHigh: 120000,
+        delayStepSeconds: 1,
+        minDelayAdjustSeconds: -60,
+        maxDelayAdjustSeconds: 300
+    }, options.blockSubmission || {});
+    var blockHoldEnabled = blockSubmitConfig.enabled === true;
+    var blockSubmitQueue = [];
+    var blockSubmissionActive = false;
+    var blockDelayAdjustment = 0;
+    var lastBlockSeenAtMs = blockHoldEnabled ? (Date.now() - (blockSubmitConfig.targetSpacingSeconds || 75) * 1000) : 0;
+    var lastBlockSeenHeight = 0;
+    var blockSubmitTimer = null;
+
 
     this.start = function () {
         SetupVarDiff();
@@ -303,6 +327,153 @@ var pool = module.exports = function pool(options, authorizeFn) {
         );
     }
 
+    function clamp(val, min, max) {
+        if (typeof min === 'number' && val < min) return min;
+        if (typeof max === 'number' && val > max) return max;
+        return val;
+    }
+
+    function recordNetworkBlockSeen(blockTemplate) {
+        if (!blockHoldEnabled) return;
+        lastBlockSeenAtMs = Date.now();
+        if (blockTemplate && blockTemplate.rpcData && blockTemplate.rpcData.height) {
+            lastBlockSeenHeight = blockTemplate.rpcData.height - 1;
+        }
+    }
+
+    function recordAcceptedBlock(shareData) {
+        if (!blockHoldEnabled) return;
+        lastBlockSeenAtMs = Date.now();
+        if (shareData && shareData.height) {
+            lastBlockSeenHeight = shareData.height;
+        }
+    }
+
+    function adjustDelayForDifficulty(blockDiff) {
+        if (!blockHoldEnabled) return;
+        var diffVal = parseFloat(blockDiff);
+        if (isNaN(diffVal)) return;
+        var slowStep = blockSubmitConfig.slowDownStepSeconds || blockSubmitConfig.delayStepSeconds || 1;
+        var fastStep = blockSubmitConfig.speedUpStepSeconds || blockSubmitConfig.delayStepSeconds || 1;
+        var updated = blockDelayAdjustment;
+        if (blockSubmitConfig.difficultyHigh && diffVal > blockSubmitConfig.difficultyHigh) {
+            updated = clamp(blockDelayAdjustment + slowStep, blockSubmitConfig.minDelayAdjustSeconds, blockSubmitConfig.maxDelayAdjustSeconds);
+        }
+        else if (blockSubmitConfig.difficultyLow && diffVal < blockSubmitConfig.difficultyLow) {
+            updated = clamp(blockDelayAdjustment - fastStep, blockSubmitConfig.minDelayAdjustSeconds, blockSubmitConfig.maxDelayAdjustSeconds);
+        }
+        if (updated !== blockDelayAdjustment) {
+            emitLog('Adjusted block submission delay to ' + updated + 's based on difficulty ' + diffVal);
+        }
+        blockDelayAdjustment = updated;
+    }
+
+    function shouldTreatCandidateAsStale(prevHash) {
+        if (!blockHoldEnabled) return false;
+        if (!prevHash) return false;
+        if (!_this.jobManager || !_this.jobManager.currentJob || !_this.jobManager.currentJob.rpcData)
+            return false;
+        return _this.jobManager.currentJob.rpcData.previousblockhash !== prevHash;
+    }
+
+    function performBlockSubmit(ctx, done) {
+        if (jobManagerLastSubmitBlockHex === ctx.blockHex) {
+            emitWarningLog('Warning, ignored duplicate submit block ' + ctx.blockHex);
+            ctx.isValidBlock = false;
+            ctx.shareData.error = ctx.shareData.error || 'duplicate-submission';
+            ctx.emitShare();
+            if (done) done();
+            return;
+        }
+
+        jobManagerLastSubmitBlockHex = ctx.blockHex;
+        SubmitBlock(ctx.blockHex, function () {
+            CheckBlockAccepted(ctx.shareData.blockHash, function (isAccepted, tx) {
+                ctx.isValidBlock = isAccepted === true;
+                if (ctx.isValidBlock === true) {
+                    ctx.shareData.txHash = tx;
+                    recordAcceptedBlock(ctx.shareData);
+                } else {
+                    ctx.shareData.error = tx;
+                }
+                ctx.emitShare();
+                GetBlockTemplate(function (error, result, foundNewBlock) {
+                    if (foundNewBlock) {
+                        emitLog('Block notification via RPC after block submission');
+                    }
+                });
+                if (done) done();
+            });
+        });
+    }
+
+    function processBlockSubmissionQueue() {
+        if (!blockHoldEnabled) return;
+        if (blockSubmissionActive || blockSubmitQueue.length === 0) return;
+
+        var ctx = blockSubmitQueue.shift();
+        adjustDelayForDifficulty(ctx.shareData.blockDiffActual);
+
+        var now = Date.now();
+        var sinceLast = lastBlockSeenAtMs ? ((now - lastBlockSeenAtMs) / 1000) : Number.POSITIVE_INFINITY;
+        var baseTarget = blockSubmitConfig.targetSpacingSeconds || 75;
+        var jitter = blockSubmitConfig.jitterSeconds || 0;
+        var jitterOffset = jitter ? ((Math.random() * (jitter * 2)) - jitter) : 0;
+
+        var enforcedMin = blockSubmitConfig.minSpacingSeconds || 0;
+        var enforcedMax = blockSubmitConfig.maxSpacingSeconds || Number.POSITIVE_INFINITY;
+
+        // Desired spacing clamped to the [min, max] window
+        var targetSpacing = baseTarget + jitterOffset + blockDelayAdjustment;
+        targetSpacing = clamp(targetSpacing, enforcedMin, enforcedMax);
+
+        // Hold needed to reach desired spacing from last seen block
+        var holdSeconds = Math.max(0, targetSpacing - sinceLast);
+
+        // Ensure we never exceed the max spacing window
+        var maxHoldForSpacing = Math.max(0, enforcedMax - sinceLast);
+        holdSeconds = Math.min(holdSeconds, maxHoldForSpacing);
+
+        // Additional safety cap on hold duration
+        if (blockSubmitConfig.maxHoldSeconds) {
+            holdSeconds = Math.min(holdSeconds, blockSubmitConfig.maxHoldSeconds);
+        }
+
+        if (holdSeconds > 0) {
+            emitLog('Holding block submission for ' + holdSeconds.toFixed(1) +
+                's (since last ' + sinceLast.toFixed(1) +
+                's, target ' + targetSpacing.toFixed(1) +
+                's, delayAdj ' + blockDelayAdjustment.toFixed(1) + 's)');
+        }
+
+        var submitCandidate = function () {
+            blockSubmissionActive = true;
+
+            if (shouldTreatCandidateAsStale(ctx.shareData.prevHash)) {
+                emitWarningLog('Discarded stale block candidate after hold; chain advanced.');
+                ctx.isValidBlock = false;
+                ctx.shareData.error = ctx.shareData.error || 'stale-during-hold';
+                blockSubmissionActive = false;
+                ctx.emitShare();
+                processBlockSubmissionQueue();
+                return;
+            }
+
+            performBlockSubmit(ctx, function () {
+                blockSubmissionActive = false;
+                processBlockSubmissionQueue();
+            });
+        };
+
+        if (holdSeconds > 0) {
+            blockSubmissionActive = true;
+            if (blockSubmitTimer) clearTimeout(blockSubmitTimer);
+            blockSubmitTimer = setTimeout(submitCandidate, holdSeconds * 1000);
+        } else {
+            submitCandidate();
+        }
+    }
+
     function SetupRecipients() {
         var recipients = [];
         options.feePercent = 0;
@@ -331,6 +502,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
         _this.jobManager = new jobManager(options);
 
         _this.jobManager.on('newBlock', function (blockTemplate) {
+            recordNetworkBlockSeen(blockTemplate);
             //Check if stratumServer has been initialized yet
             if (_this.stratumServer) {
                 _this.stratumServer.broadcastMiningJobs(blockTemplate.getJobParams());
@@ -343,11 +515,14 @@ var pool = module.exports = function pool(options, authorizeFn) {
                 _this.stratumServer.broadcastMiningJobs(job);
             }
         }).on('share', function (shareData, blockHex) {
-            //console.log('share :', isValidShare, isValidBlock, shareData)
-            var isValidShare = !shareData.error;
-            var isValidBlock = !!blockHex;
-            var emitShare = function () {
-                _this.emit('share', isValidShare, isValidBlock, shareData);
+            var ctx = {
+                shareData: shareData,
+                blockHex: blockHex,
+                isValidShare: !shareData.error,
+                isValidBlock: !!blockHex
+            };
+            ctx.emitShare = function () {
+                _this.emit('share', ctx.isValidShare, ctx.isValidBlock, ctx.shareData);
             };
 
             /*
@@ -355,30 +530,13 @@ var pool = module.exports = function pool(options, authorizeFn) {
              before we emit the share, lets submit the block,
              then check if it was accepted using RPC getblock
              */
-            if (!isValidBlock)
-                emitShare();
-            else {
-                if (jobManagerLastSubmitBlockHex === blockHex) {
-                    emitWarningLog('Warning, ignored duplicate submit block ' + blockHex);
-                } else {
-                    jobManagerLastSubmitBlockHex = blockHex;
-                    SubmitBlock(blockHex, function () {
-                        CheckBlockAccepted(shareData.blockHash, function (isAccepted, tx) {
-                            isValidBlock = isAccepted === true;
-                            if (isValidBlock === true) {
-                                shareData.txHash = tx;
-                            } else {
-                                shareData.error = tx;
-                            }
-                            emitShare();
-                            GetBlockTemplate(function (error, result, foundNewBlock) {
-                                if (foundNewBlock) {
-                                    emitLog('Block notification via RPC after block submission');
-                                }
-                            });
-                        });
-                    });
-                }
+            if (!ctx.isValidBlock) {
+                ctx.emitShare();
+            } else if (!blockHoldEnabled) {
+                performBlockSubmit(ctx);
+            } else {
+                blockSubmitQueue.push(ctx);
+                processBlockSubmissionQueue();
             }
         }).on('log', function (severity, message) {
             _this.emit('log', severity, message);
