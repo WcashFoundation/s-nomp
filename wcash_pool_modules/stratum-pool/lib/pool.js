@@ -9,7 +9,18 @@ var stratum = require('./stratum.js');
 var jobManager = require('./jobManager.js');
 var util = require('./util.js');
 
-var diff1 = global.diff1;
+var diff1TargetHex = '07ffff0000000000000000000000000000000000000000000000000000000000';
+var diff1BN = bignum(diff1TargetHex, 16);
+
+function difficultyFromTargetHex(targetHex) {
+    try {
+        var target = bignum(targetHex, 16);
+        if (target.cmpn(0) === 0) return 0;
+        return diff1BN.div(target).toNumber();
+    } catch (e) {
+        return 0;
+    }
+}
 
 /*process.on('uncaughtException', function(err) {
  console.log(err.stack);
@@ -66,6 +77,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
     var lastBlockSeenAtMs = blockHoldEnabled ? (Date.now() - (blockSubmitConfig.targetSpacingSeconds || 75) * 1000) : 0;
     var lastBlockSeenHeight = 0;
     var blockSubmitTimer = null;
+    var lastResyncBroadcastAtMs = 0;
 
 
     this.start = function () {
@@ -101,6 +113,10 @@ var pool = module.exports = function pool(options, authorizeFn) {
             var portWarnings = [];
 
             var networkDiffAdjusted = options.initStats.difficulty;
+            if ((!networkDiffAdjusted || networkDiffAdjusted === 0) && _this.jobManager && _this.jobManager.currentJob) {
+                networkDiffAdjusted = _this.jobManager.currentJob.difficulty * algos[options.coin.algorithm].multiplier;
+                options.initStats.difficulty = networkDiffAdjusted;
+            }
 
             Object.keys(options.ports).forEach(function (port) {
                 var portDiff = options.ports[port].diff;
@@ -135,7 +151,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
             'Current Block Height:\t' + _this.jobManager.currentJob.rpcData.height,
             'Current Block Diff:\t' + _this.jobManager.currentJob.difficulty * algos[options.coin.algorithm].multiplier,
             'Current Connect Peers:\t' + options.initStats.connections,
-            'Network Difficulty:\t' + options.initStats.difficulty,
+            'Network Difficulty:\t' + (options.initStats.difficulty || (_this.jobManager && _this.jobManager.currentJob ? _this.jobManager.currentJob.difficulty * algos[options.coin.algorithm].multiplier : 0)),
             'Network Hash Rate:\t' + util.getReadableHashRateString(options.initStats.networkHashRate),
             'Stratum Port(s):\t' + _this.options.initStats.stratumPorts.join(', '),
             'Pool Fee Percent:\t' + _this.options.feePercent + '%'
@@ -335,6 +351,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
 
     function recordNetworkBlockSeen(blockTemplate) {
         if (!blockHoldEnabled) return;
+        // Use wall-clock arrival time to enforce the min spacing window; chain timestamps can lag/lead.
         lastBlockSeenAtMs = Date.now();
         if (blockTemplate && blockTemplate.rpcData && blockTemplate.rpcData.height) {
             lastBlockSeenHeight = blockTemplate.rpcData.height - 1;
@@ -533,9 +550,13 @@ var pool = module.exports = function pool(options, authorizeFn) {
             if (!ctx.isValidBlock) {
                 // If a miner is submitting against an unknown job, push a fresh job so it can resync quickly
                 if (ctx.shareData && ctx.shareData.error === 'job not found' && _this.stratumServer && _this.jobManager && _this.jobManager.currentJob) {
-                    var resyncJob = _this.jobManager.currentJob.getJobParams();
-                    resyncJob[7] = true; // force clean switch so miners drop the stale job
-                    _this.stratumServer.broadcastMiningJobs(resyncJob);
+                    var nowMs = Date.now();
+                    if (nowMs - lastResyncBroadcastAtMs > 2000) { // throttle resync spam
+                        var resyncJob = _this.jobManager.currentJob.getJobParams();
+                        resyncJob[7] = true; // force clean switch so miners drop the stale job
+                        _this.stratumServer.broadcastMiningJobs(resyncJob);
+                        lastResyncBroadcastAtMs = nowMs;
+                    }
                 }
                 ctx.emitShare();
             } else if (!blockHoldEnabled) {
@@ -603,7 +624,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
                 options.protocolVersion = 0;
                 options.initStats = {
                     connections: 0,
-                    difficulty: (diff1 / target.toNumber()) * algos[options.coin.algorithm].multiplier,
+                    difficulty: difficultyFromTargetHex(res[0].response.target) * algos[options.coin.algorithm].multiplier,
                     networkHashRate: 0
                 };
                 finishedCallback();
@@ -714,7 +735,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
                     var target = bignum(res[0].response.target, 16);
                     options.testnet = false;
                     options.protocolVersion = 0;
-                    setInitStats(diff1 / target.toNumber());
+                    setInitStats(difficultyFromTargetHex(res[0].response.target));
                 });
             } else {
                 options.testnet = options.coin.hasGetInfo ? rpcResults.getinfo.testnet : rpcResults.getblockchaininfo.chain === "test";

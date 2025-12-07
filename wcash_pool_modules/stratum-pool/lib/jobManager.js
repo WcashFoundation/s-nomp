@@ -7,6 +7,9 @@ var util = require('./util.js');
 var blockTemplate = require('./blockTemplate.js');
 var nu5BlockTemplate = require('./nu5BlockTemplate.js');
 
+var diff1TargetHex = '07ffff0000000000000000000000000000000000000000000000000000000000';
+var diff1BN = bignum(diff1TargetHex, 16);
+
 const EH_PARAMS_MAP = {
     "125_4": {
         SOLUTION_LENGTH: 106,
@@ -319,7 +322,7 @@ var JobManager = module.exports = function JobManager(options) {
             var nu5BlockHash;
             var nu5BlockHex;
 
-            var nu5ShareDiff = diff1 / nu5HeaderBigNum.toNumber() * shareMultiplier;
+            var nu5ShareDiff = diff1BN.div(nu5HeaderBigNum).toNumber() * shareMultiplier;
             var nu5BlockDiffAdjusted = nu5Job.difficulty * shareMultiplier;
 
             var nu5SolutionForHash = decodedNu5Soln.solution || new Buffer(soln.slice(nu5SolutionSlice), 'hex');
@@ -463,7 +466,7 @@ var JobManager = module.exports = function JobManager(options) {
         var blockHash;
         var blockHex;
 
-        var shareDiff = diff1 / headerBigNum.toNumber() * shareMultiplier;
+        var shareDiff = diff1BN.div(headerBigNum).toNumber() * shareMultiplier;
         var blockDiffAdjusted = job.difficulty * shareMultiplier;
 
         //console.log('processShare ck8')

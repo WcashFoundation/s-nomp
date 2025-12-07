@@ -2,7 +2,9 @@ var bignum = require('bignum');
 
 var util = require('./util.js');
 
-var diff1 = global.diff1;
+// Use the full 256-bit diff1 target instead of the lossy JS number.
+var diff1TargetHex = '07ffff0000000000000000000000000000000000000000000000000000000000';
+var diff1BN = bignum(diff1TargetHex, 16);
 
 function parseHeaderPrefix(prefixHex) {
     var buf = Buffer.from(prefixHex, 'hex');
@@ -40,7 +42,7 @@ var Nu5BlockTemplate = module.exports = function Nu5BlockTemplate(jobId, rpcData
     this.headerParts = parseHeaderPrefix(rpcData.header_pre_nonce_solution);
 
     this.target = bignum(rpcData.target, 16);
-    this.difficulty = parseFloat((diff1 / this.target.toNumber()).toFixed(9));
+    this.difficulty = parseFloat(diff1BN.div(this.target).toNumber().toFixed(9));
 
     this.txCount = 1 + (Array.isArray(rpcData.transactions) ? rpcData.transactions.length : 0);
 
