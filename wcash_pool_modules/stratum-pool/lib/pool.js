@@ -511,7 +511,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
             //Check if stratumServer has been initialized yet
             if (_this.stratumServer) {
                 var job = blockTemplate.getJobParams();
-                job[8] = false;
+                job[7] = false;
                 _this.stratumServer.broadcastMiningJobs(job);
             }
         }).on('share', function (shareData, blockHex) {
@@ -531,12 +531,24 @@ var pool = module.exports = function pool(options, authorizeFn) {
              then check if it was accepted using RPC getblock
              */
             if (!ctx.isValidBlock) {
+                // If a miner is submitting against an unknown job, push a fresh job so it can resync quickly
+                if (ctx.shareData && ctx.shareData.error === 'job not found' && _this.stratumServer && _this.jobManager && _this.jobManager.currentJob) {
+                    var resyncJob = _this.jobManager.currentJob.getJobParams();
+                    resyncJob[7] = true; // force clean switch so miners drop the stale job
+                    _this.stratumServer.broadcastMiningJobs(resyncJob);
+                }
                 ctx.emitShare();
             } else if (!blockHoldEnabled) {
                 performBlockSubmit(ctx);
             } else {
                 blockSubmitQueue.push(ctx);
                 processBlockSubmissionQueue();
+                // Immediately refresh mining work so miners stay busy while we hold the block submission
+                if (_this.stratumServer && _this.jobManager && _this.jobManager.currentJob) {
+                    var refreshJob = _this.jobManager.currentJob.getJobParams();
+                    refreshJob[7] = false; // do not force a clean restart; just refresh work
+                    _this.stratumServer.broadcastMiningJobs(refreshJob);
+                }
             }
         }).on('log', function (severity, message) {
             _this.emit('log', severity, message);
@@ -1081,7 +1093,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
              //so the miner doesn't restart work and submit duplicate shares
              client.sendDifficulty(newDiff);
              var job = _this.jobManager.currentJob.getJobParams();
-             job[8] = false;
+             job[7] = false;
              client.sendMiningJob(job);
              }*/
 
