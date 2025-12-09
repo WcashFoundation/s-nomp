@@ -20,6 +20,38 @@ Instead, all fees are paid to the address in the node configuration.
 - `node_modules/stratum-pool/lib/stratum.js`: stratum subscribe returns `extranonce2_size` so miners build a correct 32-byte nonce.
 - Copies of these patched files are stored under `wcash_pool_modules/stratum-pool/lib/` for reference.
 
+### Block submission hold & mock work (WCASH)
+This pool can hold back real jobs to shape block spacing while keeping miners busy with mock work.
+
+- **What happens**
+  - Real jobs are delayed; mock jobs (randomized IDs/header fields) are sent in 10s slices during the hold.
+  - Blocks submit immediately when a real share solves; holds affect job dispatch only.
+  - Delay adapts gently by difficulty band and is clamped to hard min/max spacing.
+- **Key config (pool_configs/wcash.json > blockSubmission)**
+  - `enabled`: true to turn on holding/mocking.
+  - `targetSpacingSeconds`: base target (75).
+  - `jitterSeconds`: uniform ± jitter (10).
+  - `minSpacingSeconds` / `maxSpacingSeconds`: hard bounds for releasing real jobs (60 / 150).
+  - `maxHoldSeconds`: safety cap on any hold (150).
+  - `difficultyLow` / `difficultyHigh`: band where delay stays flat (80k / 120k).
+  - `speedUpStepSeconds` / `slowDownStepSeconds`: per-block adjustment when diff is outside the band (1s up/down).
+  - `minDelayAdjustSeconds` / `maxDelayAdjustSeconds`: clamps for the accumulated delay adjustment (-60 / 300).
+- **How scheduling works (per block)**
+  - Compute `targetSpacing = base + jitter + delayAdjustment`, clamp to [minSpacing, maxSpacing].
+  - Estimate solve time from last real job; hold so `sinceLast + estSolve + hold` stays near target.
+  - Enforce at least the remainder to `minSpacingSeconds` and never exceed `maxSpacingSeconds` or `maxHoldSeconds`.
+  - If hold > 0: send mock slices; when hold expires, broadcast the real job. If hold ≤ 0: broadcast real job immediately.
+  - On diff > `difficultyHigh`: `delayAdjustment += slowDownStepSeconds` (clamped). On diff < `difficultyLow`: `delayAdjustment -= speedUpStepSeconds` (clamped). Inside band: no change.
+- **What to expect**
+  - In-band difficulty: spacing hovers near target ± jitter; miner luck still adds noise.
+  - High difficulty: delay creeps up toward max; holds often near 150s.
+  - Low difficulty: delay creeps down; spacing never below min (60s).
+  - Mock shares are ignored; only real-job shares can produce blocks.
+- **Tuning tips**
+  - Want faster reaction: raise `speedUpStepSeconds` / `slowDownStepSeconds`.
+  - Want shorter window: lower `maxSpacingSeconds` / `maxHoldSeconds`; raise `minSpacingSeconds` if you need longer minimums.
+  - Want a quieter band: widen `difficultyLow`..`difficultyHigh`.
+
 ### Troubleshooting builds
 - The bundled `equihashverify` native module only builds cleanly against old Node/V8. If npm install fails on newer Node versions with V8/Nan errors, use Node 8.11 (nvm recommended):
   - `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && . "$NVM_DIR/nvm.sh"`

@@ -360,6 +360,19 @@ var pool = module.exports = function pool(options, authorizeFn) {
         return val;
     }
 
+    function clampDelayAdjustment(val) {
+        var baseTarget = blockSubmitConfig.targetSpacingSeconds || 0;
+        var minAdj = (blockSubmitConfig.minSpacingSeconds || 0) - baseTarget;
+        var maxAdj = (blockSubmitConfig.maxSpacingSeconds || Number.POSITIVE_INFINITY) - baseTarget;
+        if (typeof blockSubmitConfig.minDelayAdjustSeconds === 'number') {
+            minAdj = Math.max(minAdj, blockSubmitConfig.minDelayAdjustSeconds);
+        }
+        if (typeof blockSubmitConfig.maxDelayAdjustSeconds === 'number') {
+            maxAdj = Math.min(maxAdj, blockSubmitConfig.maxDelayAdjustSeconds);
+        }
+        return clamp(val, minAdj, maxAdj);
+    }
+
     function registerMockJobId(jobId) {
         mockJobIds.set(jobId, Date.now() + mockJobTtlMs);
         // Keep map reasonably small
@@ -507,10 +520,10 @@ var pool = module.exports = function pool(options, authorizeFn) {
         var fastStep = blockSubmitConfig.speedUpStepSeconds || blockSubmitConfig.delayStepSeconds || 1;
         var updated = blockDelayAdjustment;
         if (blockSubmitConfig.difficultyHigh && diffVal > blockSubmitConfig.difficultyHigh) {
-            updated = clamp(blockDelayAdjustment + slowStep, blockSubmitConfig.minDelayAdjustSeconds, blockSubmitConfig.maxDelayAdjustSeconds);
+            updated = clampDelayAdjustment(blockDelayAdjustment + slowStep);
         }
         else if (blockSubmitConfig.difficultyLow && diffVal < blockSubmitConfig.difficultyLow) {
-            updated = clamp(blockDelayAdjustment - fastStep, blockSubmitConfig.minDelayAdjustSeconds, blockSubmitConfig.maxDelayAdjustSeconds);
+            updated = clampDelayAdjustment(blockDelayAdjustment - fastStep);
         }
         if (updated !== blockDelayAdjustment) {
             emitLog('Adjusted block submission delay to ' + updated + 's based on difficulty ' + diffVal);
