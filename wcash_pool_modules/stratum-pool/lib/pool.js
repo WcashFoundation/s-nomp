@@ -1,6 +1,7 @@
 var events = require('events');
 var async = require('async');
 var bignum = require('bignum');
+var crypto = require('crypto');
 
 var varDiff = require('./varDiff.js');
 var daemon = require('./daemon.js');
@@ -78,6 +79,16 @@ var pool = module.exports = function pool(options, authorizeFn) {
     var lastBlockSeenHeight = 0;
     var blockSubmitTimer = null;
     var lastResyncBroadcastAtMs = 0;
+    var mockJobSliceSeconds = clamp((options.mockJobSliceSeconds || 10), 2, 30);
+    var mockJobTtlMs = (options.mockJobTtlSeconds || 300) * 1000;
+    var mockJobIds = new Map();
+    var mockJobSeq = 0;
+    var mockDispatchTimer = null;
+    var pendingRealJob = null;
+    var waitingForRealJob = false;
+    var observedSolveSeconds = blockSubmitConfig.targetSpacingSeconds || 75;
+    var realJobDispatchTimes = {};
+    var lastBroadcastJobParams = null;
 
 
     this.start = function () {
@@ -349,6 +360,128 @@ var pool = module.exports = function pool(options, authorizeFn) {
         return val;
     }
 
+    function registerMockJobId(jobId) {
+        mockJobIds.set(jobId, Date.now() + mockJobTtlMs);
+        // Keep map reasonably small
+        if (mockJobIds.size > 200) {
+            var now = Date.now();
+            Array.from(mockJobIds.keys()).forEach(function (k) {
+                if (mockJobIds.get(k) < now) mockJobIds.delete(k);
+            });
+        }
+    }
+
+    function isMockJobId(jobId) {
+        if (!jobId) return false;
+        var expires = mockJobIds.get(jobId);
+        if (!expires) return false;
+        if (expires < Date.now()) {
+            mockJobIds.delete(jobId);
+            return false;
+        }
+        return true;
+    }
+
+    function clearMockDispatchTimer() {
+        if (mockDispatchTimer) clearTimeout(mockDispatchTimer);
+        mockDispatchTimer = null;
+    }
+
+    function computeRealJobHoldSeconds() {
+        if (!blockHoldEnabled) return 0;
+        var baseTarget = blockSubmitConfig.targetSpacingSeconds || 0;
+        var jitter = blockSubmitConfig.jitterSeconds || 0;
+        var jitterOffset = jitter ? ((Math.random() * (jitter * 2)) - jitter) : 0;
+        var enforcedMin = blockSubmitConfig.minSpacingSeconds || 0;
+        var enforcedMax = blockSubmitConfig.maxSpacingSeconds || Number.POSITIVE_INFINITY;
+        var targetSpacing = baseTarget + jitterOffset + blockDelayAdjustment;
+        targetSpacing = clamp(targetSpacing, enforcedMin, enforcedMax);
+
+        var estSolve = clamp(observedSolveSeconds || 0, 1, enforcedMax);
+        var sinceLast = lastBlockSeenAtMs ? ((Date.now() - lastBlockSeenAtMs) / 1000) : 0;
+        // Enforce a hard minimum spacing: if we’re inside the min window, hold at least the remainder.
+        var minHoldSeconds = Math.max(0, enforcedMin - sinceLast);
+        var holdSeconds = Math.max(minHoldSeconds, targetSpacing - estSolve - sinceLast);
+        // Don’t allow release so late that spacing exceeds the max window.
+        var maxHoldForSpacing = Math.max(0, enforcedMax - sinceLast);
+        holdSeconds = Math.min(holdSeconds, maxHoldForSpacing);
+        if (blockSubmitConfig.maxHoldSeconds) {
+            holdSeconds = Math.min(holdSeconds, blockSubmitConfig.maxHoldSeconds);
+        }
+        return holdSeconds;
+    }
+
+    var currentHoldToken = 0;
+
+    function broadcastRealJob(blockTemplate, forceClean) {
+        if (!_this.stratumServer || !blockTemplate) return;
+        clearMockDispatchTimer();
+        waitingForRealJob = false;
+        pendingRealJob = null;
+        var job = blockTemplate.getJobParams();
+        if (forceClean === true) job[7] = true;
+        realJobDispatchTimes[blockTemplate.jobId] = Date.now();
+        var dispatchKeys = Object.keys(realJobDispatchTimes);
+        if (dispatchKeys.length > 50) {
+            delete realJobDispatchTimes[dispatchKeys[0]];
+        }
+        lastBroadcastJobParams = job;
+        _this.stratumServer.broadcastMiningJobs(job);
+    }
+
+    function broadcastMockJobSlice(remainingSeconds, holdToken) {
+        if (!blockHoldEnabled) return;
+        if (!_this.stratumServer) return;
+        if (holdToken !== currentHoldToken) return;
+
+        var template = pendingRealJob || (_this.jobManager && _this.jobManager.currentJob);
+        if (!template || !template.getJobParams) return;
+
+        var slice = Math.min(mockJobSliceSeconds, remainingSeconds);
+        var leftover = Math.max(0, remainingSeconds - slice);
+
+        var jobParams = template.getJobParams().slice();
+        var mockId = 'mock-' + template.jobId + '-' + (++mockJobSeq);
+        var prevBytes = (jobParams[2] && jobParams[2].length) ? Math.max(1, jobParams[2].length / 2) : 32;
+        var rootBytes = (jobParams[3] && jobParams[3].length) ? Math.max(1, jobParams[3].length / 2) : 32;
+        jobParams[0] = mockId;
+        jobParams[2] = crypto.randomBytes(prevBytes).toString('hex');
+        jobParams[3] = crypto.randomBytes(rootBytes).toString('hex');
+        jobParams[7] = true;
+        registerMockJobId(mockId);
+        lastBroadcastJobParams = jobParams;
+        _this.stratumServer.broadcastMiningJobs(jobParams);
+
+        mockDispatchTimer = setTimeout(function () {
+            if (holdToken !== currentHoldToken) return;
+            if (leftover <= 0) {
+                broadcastRealJob(pendingRealJob || template, true);
+            } else {
+                broadcastMockJobSlice(leftover, holdToken);
+            }
+        }, slice * 1000);
+    }
+
+    function scheduleRealJobDispatch(blockTemplate, forceClean) {
+        pendingRealJob = blockTemplate;
+        clearMockDispatchTimer();
+        if (!blockHoldEnabled) {
+            broadcastRealJob(blockTemplate, forceClean);
+            return;
+        }
+
+        var holdSeconds = computeRealJobHoldSeconds();
+        if (holdSeconds <= 0) {
+            broadcastRealJob(blockTemplate, forceClean);
+            return;
+        }
+
+        waitingForRealJob = true;
+        currentHoldToken++;
+        emitLog('Delaying real job for ' + holdSeconds.toFixed(1) + 's; issuing mock work slices of ' + mockJobSliceSeconds + 's');
+        broadcastMockJobSlice(holdSeconds, currentHoldToken);
+    }
+
     function recordNetworkBlockSeen(blockTemplate) {
         if (!blockHoldEnabled) return;
         // Use wall-clock arrival time to enforce the min spacing window; chain timestamps can lag/lead.
@@ -522,21 +655,30 @@ var pool = module.exports = function pool(options, authorizeFn) {
             recordNetworkBlockSeen(blockTemplate);
             //Check if stratumServer has been initialized yet
             if (_this.stratumServer) {
-                _this.stratumServer.broadcastMiningJobs(blockTemplate.getJobParams());
+                scheduleRealJobDispatch(blockTemplate, true);
+            } else {
+                pendingRealJob = blockTemplate;
             }
         }).on('updatedBlock', function (blockTemplate) {
             //Check if stratumServer has been initialized yet
             if (_this.stratumServer) {
-                var job = blockTemplate.getJobParams();
-                job[7] = false;
-                _this.stratumServer.broadcastMiningJobs(job);
+                if (waitingForRealJob && blockHoldEnabled) {
+                    pendingRealJob = blockTemplate;
+                } else {
+                    var job = blockTemplate.getJobParams();
+                    job[7] = false;
+                    _this.stratumServer.broadcastMiningJobs(job);
+                    lastBroadcastJobParams = job;
+                }
+            } else {
+                pendingRealJob = blockTemplate;
             }
         }).on('share', function (shareData, blockHex) {
-            var ctx = {
-                shareData: shareData,
-                blockHex: blockHex,
-                isValidShare: !shareData.error,
-                isValidBlock: !!blockHex
+                var ctx = {
+                    shareData: shareData,
+                    blockHex: blockHex,
+                    isValidShare: !shareData.error,
+                    isValidBlock: !!blockHex
             };
             ctx.emitShare = function () {
                 _this.emit('share', ctx.isValidShare, ctx.isValidBlock, ctx.shareData);
@@ -550,26 +692,24 @@ var pool = module.exports = function pool(options, authorizeFn) {
             if (!ctx.isValidBlock) {
                 // If a miner is submitting against an unknown job, push a fresh job so it can resync quickly
                 if (ctx.shareData && ctx.shareData.error === 'job not found' && _this.stratumServer && _this.jobManager && _this.jobManager.currentJob) {
+                    // Aggressively resync on first job-not-found to quiet log spam; throttle lightly afterwards.
                     var nowMs = Date.now();
-                    if (nowMs - lastResyncBroadcastAtMs > 2000) { // throttle resync spam
-                        var resyncJob = _this.jobManager.currentJob.getJobParams();
-                        resyncJob[7] = true; // force clean switch so miners drop the stale job
+                    if (nowMs - lastResyncBroadcastAtMs > 500) {
+                        var resyncJob = (lastBroadcastJobParams && lastBroadcastJobParams.slice()) || _this.jobManager.currentJob.getJobParams();
+                        resyncJob[7] = true;
                         _this.stratumServer.broadcastMiningJobs(resyncJob);
+                        lastBroadcastJobParams = resyncJob;
                         lastResyncBroadcastAtMs = nowMs;
                     }
                 }
                 ctx.emitShare();
-            } else if (!blockHoldEnabled) {
-                performBlockSubmit(ctx);
             } else {
-                blockSubmitQueue.push(ctx);
-                processBlockSubmissionQueue();
-                // Immediately refresh mining work so miners stay busy while we hold the block submission
-                if (_this.stratumServer && _this.jobManager && _this.jobManager.currentJob) {
-                    var refreshJob = _this.jobManager.currentJob.getJobParams();
-                    refreshJob[7] = false; // do not force a clean restart; just refresh work
-                    _this.stratumServer.broadcastMiningJobs(refreshJob);
+                adjustDelayForDifficulty(ctx.shareData.blockDiffActual);
+                var dispatchAt = realJobDispatchTimes[ctx.shareData.job];
+                if (dispatchAt) {
+                    observedSolveSeconds = Math.max(1, (Date.now() - dispatchAt) / 1000);
                 }
+                performBlockSubmit(ctx);
             }
         }).on('log', function (severity, message) {
             _this.emit('log', severity, message);
@@ -757,8 +897,7 @@ var pool = module.exports = function pool(options, authorizeFn) {
 
         _this.stratumServer.on('started', function () {
             options.initStats.stratumPorts = Object.keys(options.ports);
-            var job = _this.jobManager.currentJob.getJobParams();
-            _this.stratumServer.broadcastMiningJobs(job);
+            scheduleRealJobDispatch(_this.jobManager.currentJob, true);
             finishedCallback();
 
         }).on('broadcastTimeout', function () {
@@ -793,10 +932,16 @@ var pool = module.exports = function pool(options, authorizeFn) {
                 } else {
                     this.sendDifficulty(8);
                 }
-                var job = _this.jobManager.currentJob.getJobParams()
-                this.sendMiningJob(job);
+                var job = lastBroadcastJobParams || (_this.jobManager && _this.jobManager.currentJob && _this.jobManager.currentJob.getJobParams());
+                if (job) {
+                    this.sendMiningJob(job);
+                }
 
             }).on('submit', function (params, resultCallback) {
+                if (isMockJobId(params.jobId)) {
+                    resultCallback(null, true);
+                    return;
+                }
                 var result = _this.jobManager.processShare(
                     params.jobId,
                     client.previousDifficulty,
